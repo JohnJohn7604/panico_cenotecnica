@@ -14,6 +14,19 @@ Uma vez conectado à rede (Wi-Fi ou Ethernet), basta acionar o botão para defin
 
 Lógica de Prioridades: Ao ser ligado, o sistema assume prioridade 200 (sobrepondo-se à mesa). Ao ser desligado, ele zera as luzes e reduz a prioridade para 50, devolvendo o controle da rede imediatamente para o console.
 
+Validação e Testes de Bancada
+
+Antes do comissionamento na rede oficial (VLAN) de iluminação do estúdio, o *firmware* do ESP32 foi rigorosamente testado em um ambiente de rede local (WLAN) isolado. 
+
+Para auditar o tráfego de rede e confirmar a integridade dos pacotes gerados em baixo nível, utilizamos o software de monitoramento **sACN View**. 
+
+Durante a validação em bancada, os seguintes parâmetros foram homologados com sucesso:
+
+* **Transmissão de Pacotes:** Confirmação do encapsulamento correto dos dados sACN (pacotes exatos de 638 bytes) trafegando via protocolo UDP.
+* **Roteamento de Universo:** Verificação de que o sinal estava sendo direcionado com precisão para o **Universo 7**, conforme exigido pela arquitetura do estúdio.
+* **Manipulação de Payload (Canais de Dimmer):** Comprovação em tempo real da alteração simultânea dos 512 endereços DMX. Ao acionar o sistema, o *sACN View* registrou os canais subindo para o valor `129` (~50% de intensidade).
+* **Gestão de Prioridades:** Validação da máquina de estados, comprovando a injeção da Prioridade `200` ao ativar o botão (para assumir o controle) e a queda para a Prioridade `50` com valor de canal `0` ao desativar (para devolver o controle).
+
 Nota: No protótipo atual, estamos usando o botão 'Boot' da placa para demonstração do teste da máquina de estados.
 
 Benefícios Operacionais
