@@ -35,7 +35,7 @@ void setup_sACN() {
     pacote_sACN[38] = 0x72; pacote_sACN[39] = 0x58;
     pacote_sACN[40] = 0x00; pacote_sACN[41] = 0x00; pacote_sACN[42] = 0x00; pacote_sACN[43] = 0x02;
     strcpy((char*)&pacote_sACN[44], "Botao Panico K");
-    pacote_sACN[108] = 200; // Prioridade Máxima
+    pacote_sACN[108] = 100; // Prioridade Máxima
     pacote_sACN[113] = (UNIVERSO >> 8) & 0xFF;
     pacote_sACN[114] = UNIVERSO & 0xFF;
     pacote_sACN[115] = 0x72; pacote_sACN[116] = 0x0B;
@@ -107,7 +107,7 @@ void loop() {
             
             if (estadoLuz) {
                 // AÇÃO: LIGAR O PÂNICO
-                prioridadeAtual = 200; // Assume o controle na marra
+                prioridadeAtual = 100; // Assume o controle na marra
                 digitalWrite(PINO_LED_VERDE, HIGH);    // Acende Verde
                 digitalWrite(PINO_LED_VERMELHO, LOW);  // Apaga Vermelho
                 emTransicaoOff = false; // Cancela qualquer transição
