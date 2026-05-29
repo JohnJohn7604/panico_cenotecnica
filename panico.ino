@@ -2,25 +2,39 @@
 #include <WiFiUdp.h>
 
 // --- CONFIGURAÇÕES DA REDE WI-FI ---
-const char* ssid = "COLOCAR SSID";
-const char* password = "#dmx-kl#";
+const char* ssid = "ACER78";
+const char* password = "123456789";
 
-// IP de destino
+// IP de destino (Calculado dinamicamente com base no Universo)
 IPAddress ipDestino(239, 255, 0, 7); 
 unsigned int localPort = 5568;
 
 WiFiUDP udp;
 
-// --- CONFIGURAÇÕES DO ESTÚDIO ---
-const int BOTAO_PANICO = 0; // Configurado para o botão BOOT
+// --- CONFIGURAÇÕES DE BOTÕES/ESTÚDIO ---
+const int BOTAO_PANICO = 0;       // Botão BOOT do ESP32
+const int BOTAO_UP = 32;
+const int BOTAO_DOWN = 25;
+const int BOTAO_CONFIRM = 34;
+
 const int PINO_LED_VERDE = 12;    // LED de Pânico Ativado
 const int PINO_LED_VERMELHO = 27; // LED de Pânico Desativado (Controle da Mesa)
-const int UNIVERSO = 7;
+
+// --- VARIÁVEIS DE CONTROLE DE ESTADO ---
+int UNIVERSO = 7;                // Começa no 7 por padrão
+bool universoConfirmado = false; // Bloqueia o pânico até que confirme o universo
 bool estadoLuz = false; 
 byte seqNum = 0;
+
 unsigned long tempoDesligamento = 0;
+unsigned long tempoUltimoCliqueBotoes = 0; // Debounce dos botões de seleção
+unsigned long ultimoClique = 0;            // Debounce do botão de pânico
+unsigned long tempoPiscaLED = 0;           // Controla o tempo do pisca do LED Vermelho
+
 bool emTransicaoOff = false;
-byte prioridadeAtual = 50; // Começa entregando o controle pra mesa
+byte prioridadeAtual = 50;       // Começa entregando o controle pra mesa
+bool mensagemEnviada = false;    // Controla para o print rodar apenas uma vez
+bool estadoLedPisca = LOW;       // Guarda se o LED Vermelho está HIGH ou LOW
 
 byte pacote_sACN[638]; 
 
@@ -35,7 +49,8 @@ void setup_sACN() {
     pacote_sACN[38] = 0x72; pacote_sACN[39] = 0x58;
     pacote_sACN[40] = 0x00; pacote_sACN[41] = 0x00; pacote_sACN[42] = 0x00; pacote_sACN[43] = 0x02;
     strcpy((char*)&pacote_sACN[44], "Botao Panico K");
-    pacote_sACN[108] = 100; // Prioridade Máxima
+    
+    pacote_sACN[108] = prioridadeAtual; 
     pacote_sACN[113] = (UNIVERSO >> 8) & 0xFF;
     pacote_sACN[114] = UNIVERSO & 0xFF;
     pacote_sACN[115] = 0x72; pacote_sACN[116] = 0x0B;
@@ -47,29 +62,21 @@ void setup_sACN() {
 }
 
 void setup() {
-    // Abre a comunicação de diagnóstico com o PC
     Serial.begin(115200);
     delay(500);
     Serial.println("\n--- Iniciando Sistema de Panico Est K---");
 
     pinMode(BOTAO_PANICO, INPUT_PULLUP);
+    pinMode(BOTAO_UP, INPUT_PULLUP);
+    pinMode(BOTAO_DOWN, INPUT_PULLUP);
+    pinMode(BOTAO_CONFIRM, INPUT_PULLUP);
 
-    // Configura os LEDs como saída
     pinMode(PINO_LED_VERDE, OUTPUT);
     pinMode(PINO_LED_VERMELHO, OUTPUT);
 
-    // Estado inicial: Sistema desligado, controle na mesa
     digitalWrite(PINO_LED_VERDE, LOW);
-    digitalWrite(PINO_LED_VERMELHO, HIGH);
+    digitalWrite(PINO_LED_VERMELHO, LOW);
 
-    // --- SE A REDE EXIGIR IP FIXO, BASTA DESCOMENTAR E PREENCHER AQUI ---
-    // IPAddress ipESP(10, 10, 7, 200);      // IP que a equipe de redes liberar pra você
-    // IPAddress gateway(10, 10, 7, 1);      // Gateway da rede de luz
-    // IPAddress subnet(255, 255, 255, 0);   // Máscara de sub-rede
-    // WiFi.config(ipESP, gateway, subnet);
-    // --------------------------------------------------------------------
-
-    // Conecta no Wi-Fi
     Serial.print("Conectando ao Wi-Fi: ");
     Serial.println(ssid);
     WiFi.begin(ssid, password);
@@ -77,9 +84,9 @@ void setup() {
     int tentativas = 0;
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
-        Serial.print("."); // Vai imprimindo pontinhos enquanto tenta conectar
+        Serial.print("."); 
         tentativas++;
-        if(tentativas > 30) { // Se passar de 15 segundos sem conectar, avisa
+        if(tentativas > 30) { 
             Serial.println("\n[ERRO] Nao foi possivel conectar ao Wi-Fi. Verifique SSID/Senha.");
             break;
         }
@@ -88,60 +95,157 @@ void setup() {
     if(WiFi.status() == WL_CONNECTED) {
         Serial.println("\n[SUCESSO] Wi-Fi Conectado!");
         Serial.print("IP do ESP32: ");
-        Serial.println(WiFi.localIP()); // Mostra o IP que a placa ganhou
+        Serial.println(WiFi.localIP()); 
     }
 
     udp.begin(localPort);
     setup_sACN();
+
+    Serial.println("=============================================");
+    Serial.println("SELEÇÃO DE UNIVERSO");
+    Serial.print("Use UP/DOWN. Universo atual: "); Serial.println(UNIVERSO);
+    Serial.println("Pressione UP, DOWN ou CONFIRM para iniciar o sistema.");
+    Serial.println("=============================================\n");
+
+    // Enquanto nenhum botão for pressionado, fica travado aqui E pisca o LED de configuração
+    while (digitalRead(BOTAO_UP) == HIGH && 
+           digitalRead(BOTAO_DOWN) == HIGH && 
+           digitalRead(BOTAO_CONFIRM) == HIGH) {
+        
+        // Faz o LED piscar mesmo travado aqui dentro no início
+        unsigned long m = millis();
+        if (m - tempoPiscaLED >= 250) {
+            estadoLedPisca = !estadoLedPisca;
+            digitalWrite(PINO_LED_VERMELHO, estadoLedPisca);
+            tempoPiscaLED = m;
+        }
+        delay(10); 
+    }
+    
+    Serial.println(">>> Interacao detectada! Modo Selecao Liberado. <<<\n");
 }
 
-unsigned long ultimoClique = 0;
 int estadoAnteriorBotao = HIGH;
 
 void loop() {
-    // 1. Leitura do Botão (O pino 0 é o 'Boot' do ESP32)
-    int leituraAtual = digitalRead(0); 
-    if (leituraAtual == LOW && estadoAnteriorBotao == HIGH) {
-        if (millis() - ultimoClique > 300) { //Debounce
-            estadoLuz = !estadoLuz; 
-            
-            if (estadoLuz) {
-                // AÇÃO: LIGAR O PÂNICO
-                prioridadeAtual = 100; // Assume o controle na marra
-                digitalWrite(PINO_LED_VERDE, HIGH);    // Acende Verde
-                digitalWrite(PINO_LED_VERMELHO, LOW);  // Apaga Vermelho
-                emTransicaoOff = false; // Cancela qualquer transição
-                for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 129; // Output 50%
-            } else {
-                // AÇÃO: DESLIGAR O PÂNICO (Início dos 3 segundos)
-                prioridadeAtual = 50; // Mantém a prioridade alta para forçar o apagão
-                digitalWrite(PINO_LED_VERDE, LOW);     // Apaga Verde
-                digitalWrite(PINO_LED_VERMELHO, HIGH); // Acende Vermelho
-                emTransicaoOff = true; // Inicia o cronômetro
-                tempoDesligamento = millis(); // Grava a hora exata do clique
-                for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 0; // Força zero
-            }
-            ultimoClique = millis();
+    unsigned long tempoAtual = millis();
+
+    // --- MÁQUINA DE ESTADOS: MODO SELEÇÃO (TROCA DE UNIVERSO) ---
+    if (!universoConfirmado) {
+        digitalWrite(PINO_LED_VERDE, LOW);
+
+        // LED Vermelho pisca rápido indicando "Modo Troca / Configuração"
+        if (tempoAtual - tempoPiscaLED >= 250) {
+            estadoLedPisca = !estadoLedPisca;
+            digitalWrite(PINO_LED_VERMELHO, estadoLedPisca);
+            tempoPiscaLED = tempoAtual;
         }
+
+        // Botão SUBIR Universo
+        if (digitalRead(BOTAO_UP) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 250)) {
+            UNIVERSO++;
+            if (UNIVERSO > 63999) UNIVERSO = 63999; 
+            Serial.print("[CONFIG] Universo Selecionado: "); Serial.println(UNIVERSO);
+            tempoUltimoCliqueBotoes = tempoAtual;
+        }
+
+        // Botão DESCER Universo
+        if (digitalRead(BOTAO_DOWN) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 250)) {
+            UNIVERSO--;
+            if (UNIVERSO < 1) UNIVERSO = 1; 
+            Serial.print("[CONFIG] Universo Selecionado: "); Serial.println(UNIVERSO);
+            tempoUltimoCliqueBotoes = tempoAtual;
+        }
+
+        // Botão CONFIRMAR Universo (TRAVA O SISTEMA E PARA DE PISCAR)
+        if (digitalRead(BOTAO_CONFIRM) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 300)) {
+            universoConfirmado = true;
+            
+            // Injeta o universo selecionado no cabeçalho sACN
+            pacote_sACN[113] = (UNIVERSO >> 8) & 0xFF;
+            pacote_sACN[114] = UNIVERSO & 0xFF;
+
+            // Recalcula dinamicamente o IP Multicast alvo
+            ipDestino = IPAddress(239, 255, (UNIVERSO >> 8) & 0xFF, UNIVERSO & 0xFF);
+            
+            // LED Fica ACESO FIXO indicando pronto/trava realizada
+            digitalWrite(PINO_LED_VERMELHO, HIGH); 
+            tempoUltimoCliqueBotoes = tempoAtual;
+        }
+    } 
+    
+    // --- MÁQUINA DE ESTADOS: MODO OPERAÇÃO (SISTEMA ARMADO) ---
+    else {
+        // PRINT ÚNICO: Mostra a mensagem uma única vez e para
+        if (!mensagemEnviada) {
+            Serial.print("\n[OK] UNIVERSO TRAVADO EM: "); Serial.println(UNIVERSO);
+            Serial.print("[REDE] IP Alvo Multicast reconfigurado para: "); Serial.println(ipDestino);
+            Serial.println(">>> SINAL LIBERADO: Pânico pronto para operar! <<<\n");
+            mensagemEnviada = true; 
+        }
+
+        // Se quiser trocar o universo de novo, pressiona CONFIRM para voltar ao modo troca
+        if (digitalRead(BOTAO_CONFIRM) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 300)) {
+            universoConfirmado = false;
+            mensagemEnviada = false; // Permite printar de novo na próxima confirmação
+            estadoLuz = false; 
+            prioridadeAtual = 50;    // Devolve a linha para a mesa antes de sair
+            Serial.println("\n[RESET] Modo Selecao Ativo. Escolha o universo...");
+            tempoUltimoCliqueBotoes = tempoAtual;
+            return; 
+        }
+
+        // 1. Leitura do Botão de Pânico (BOOT)
+        int leituraAtual = digitalRead(BOTAO_PANICO); 
+        if (leituraAtual == LOW && estadoAnteriorBotao == HIGH) {
+            if (tempoAtual - ultimoClique > 300) { 
+                estadoLuz = !estadoLuz; 
+                
+                if (estadoLuz) {
+                    // AÇÃO: LIGAR O PÂNICO
+                    prioridadeAtual = 200; 
+                    digitalWrite(PINO_LED_VERDE, HIGH);    
+                    digitalWrite(PINO_LED_VERMELHO, LOW);  // Desliga o vermelho enquanto o pânico atua
+                    emTransicaoOff = false; 
+                    for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 129; 
+                    Serial.println("[ALERTA] PANICO ATIVADO NO ESTÚDIO!");
+                } else {
+                    // AÇÃO: DESLIGAR O PÂNICO
+                    prioridadeAtual = 200; 
+                    digitalWrite(PINO_LED_VERDE, LOW);     
+                    digitalWrite(PINO_LED_VERMELHO, HIGH); // Restaura o vermelho fixo (Sistema em espera)
+                    emTransicaoOff = true; 
+                    tempoDesligamento = tempoAtual; 
+                    for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 0; 
+                    Serial.println("[INFO] Botao liberado. Forçando blackout de seguranca...");
+                }
+                ultimoClique = tempoAtual;
+            }
+        }
+        estadoAnteriorBotao = leituraAtual;
+
+        // 2. Cronômetro de Meio Segundo (500ms) para limpar a rede e liberar para a mesa
+        if (emTransicaoOff && (tempoAtual - tempoDesligamento >= 500)) {
+            prioridadeAtual = 50; 
+            emTransicaoOff = false; 
+            Serial.println("[INFO] Transicao concluida. Linha devolvida com sucesso para a mesa.");
+        }
+
+        // 3. Aplica a Prioridade Dinâmica no Pacote sACN
+        pacote_sACN[108] = prioridadeAtual;
+
+        // 4. O Cronômetro de Meio Segundo (500ms) para limpar a rede e devolver pra mesa
+        if (emTransicaoOff && (tempoAtual - tempoDesligamento >= 500)) {
+            prioridadeAtual = 50; 
+            emTransicaoOff = false; 
+            
+            // MÁGICA AQUI: Libera para o print rodar novamente na tela!
+            mensagemEnviada = false; 
+            
+            Serial.println("[INFO] Transicao concluida. Linha devolvida com sucesso para a mesa.");
+        }
+
+        // 5. Heartbeat DMX (40fps)
+        delay(25); 
     }
-    estadoAnteriorBotao = leituraAtual;
-
-    // 2. O Cronômetro de Meio Segundo (500ms)
-    if (emTransicaoOff && (millis() - tempoDesligamento >= 500)) {
-        // Passaram os 500ms cravados
-        prioridadeAtual = 50; // Devolve o controle pra mesa
-        emTransicaoOff = false; // Finaliza a transição
-    }
-
-    // 3. Aplica a Prioridade Dinâmica no Pacote sACN
-    pacote_sACN[108] = prioridadeAtual;
-
-    // 4. Atualiza a sequência e envia via Wi-Fi/Ethernet
-    pacote_sACN[111] = seqNum++;
-    udp.beginPacket(ipDestino, 5568);
-    udp.write(pacote_sACN, 638);
-    udp.endPacket();
-
-    // 5. Heartbeat DMX (40fps)
-    delay(25); 
 }
