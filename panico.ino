@@ -13,9 +13,9 @@ WiFiUDP udp;
 
 // --- CONFIGURAÇÕES DE BOTÕES/ESTÚDIO ---
 const int BOTAO_PANICO = 0;       // Botão BOOT do ESP32
-const int BOTAO_UP = 32;
-const int BOTAO_DOWN = 25;
-const int BOTAO_CONFIRM = 34;
+const int BOTAO_UP = 25;
+const int BOTAO_DOWN = 14;
+const int BOTAO_CONFIRM = 26;
 
 const int PINO_LED_VERDE = 12;    // LED de Pânico Ativado
 const int PINO_LED_VERMELHO = 27; // LED de Pânico Desativado (Controle da Mesa)
@@ -217,7 +217,7 @@ void loop() {
                     emTransicaoOff = true; 
                     tempoDesligamento = tempoAtual; 
                     for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 0; 
-                    Serial.println("[INFO] Botao liberado. Forçando blackout de seguranca...");
+                    Serial.println("Panico liberado. Forçando blackout...");
                 }
                 ultimoClique = tempoAtual;
             }
@@ -228,7 +228,7 @@ void loop() {
         if (emTransicaoOff && (tempoAtual - tempoDesligamento >= 500)) {
             prioridadeAtual = 50; 
             emTransicaoOff = false; 
-            Serial.println("[INFO] Transicao concluida. Linha devolvida com sucesso para a mesa.");
+            Serial.println("[Linha devolvida com sucesso para a mesa. Panico desativado");
         }
 
         // 3. Aplica a Prioridade Dinâmica no Pacote sACN
@@ -242,7 +242,7 @@ void loop() {
             // MÁGICA AQUI: Libera para o print rodar novamente na tela!
             mensagemEnviada = false; 
             
-            Serial.println("[INFO] Transicao concluida. Linha devolvida com sucesso para a mesa.");
+            Serial.println("[Linha devolvida com sucesso para a mesa. Panico desativado");
         }
 
         // 5. Heartbeat DMX (40fps)
