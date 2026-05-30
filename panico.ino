@@ -107,12 +107,10 @@ void setup() {
     Serial.println("Pressione UP, DOWN ou CONFIRM para iniciar o sistema.");
     Serial.println("=============================================\n");
 
-    // Enquanto nenhum botão for pressionado, fica travado aqui E pisca o LED de configuração
     while (digitalRead(BOTAO_UP) == HIGH && 
            digitalRead(BOTAO_DOWN) == HIGH && 
            digitalRead(BOTAO_CONFIRM) == HIGH) {
         
-        // Faz o LED piscar mesmo travado aqui dentro no início
         unsigned long m = millis();
         if (m - tempoPiscaLED >= 250) {
             estadoLedPisca = !estadoLedPisca;
@@ -134,14 +132,12 @@ void loop() {
     if (!universoConfirmado) {
         digitalWrite(PINO_LED_VERDE, LOW);
 
-        // LED Vermelho pisca rápido indicando "Modo Troca / Configuração"
         if (tempoAtual - tempoPiscaLED >= 250) {
             estadoLedPisca = !estadoLedPisca;
             digitalWrite(PINO_LED_VERMELHO, estadoLedPisca);
             tempoPiscaLED = tempoAtual;
         }
 
-        // Botão SUBIR Universo
         if (digitalRead(BOTAO_UP) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 250)) {
             UNIVERSO++;
             if (UNIVERSO > 63999) UNIVERSO = 63999; 
@@ -149,7 +145,6 @@ void loop() {
             tempoUltimoCliqueBotoes = tempoAtual;
         }
 
-        // Botão DESCER Universo
         if (digitalRead(BOTAO_DOWN) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 250)) {
             UNIVERSO--;
             if (UNIVERSO < 1) UNIVERSO = 1; 
@@ -157,18 +152,14 @@ void loop() {
             tempoUltimoCliqueBotoes = tempoAtual;
         }
 
-        // Botão CONFIRMAR Universo (TRAVA O SISTEMA E PARA DE PISCAR)
-        if (digitalRead(BOTAO_CONFIRM) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 300)) {
+        if (digitalRead(BOTAO_CONFIRM) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 400)) {
             universoConfirmado = true;
             
-            // Injeta o universo selecionado no cabeçalho sACN
             pacote_sACN[113] = (UNIVERSO >> 8) & 0xFF;
             pacote_sACN[114] = UNIVERSO & 0xFF;
 
-            // Recalcula dinamicamente o IP Multicast alvo
             ipDestino = IPAddress(239, 255, (UNIVERSO >> 8) & 0xFF, UNIVERSO & 0xFF);
             
-            // LED Fica ACESO FIXO indicando pronto/trava realizada
             digitalWrite(PINO_LED_VERMELHO, HIGH); 
             tempoUltimoCliqueBotoes = tempoAtual;
         }
@@ -176,7 +167,7 @@ void loop() {
     
     // --- MÁQUINA DE ESTADOS: MODO OPERAÇÃO (SISTEMA ARMADO) ---
     else {
-        // PRINT ÚNICO: Mostra a mensagem uma única vez e para
+        // Mostra a mensagem de confirmação inicial uma única vez
         if (!mensagemEnviada) {
             Serial.print("\n[OK] UNIVERSO TRAVADO EM: "); Serial.println(UNIVERSO);
             Serial.print("[REDE] IP Alvo Multicast reconfigurado para: "); Serial.println(ipDestino);
@@ -184,12 +175,12 @@ void loop() {
             mensagemEnviada = true; 
         }
 
-        // Se quiser trocar o universo de novo, pressiona CONFIRM para voltar ao modo troca
-        if (digitalRead(BOTAO_CONFIRM) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 300)) {
+        // Retorna ao modo seleção se pressionar CONFIRM novamente
+        if (digitalRead(BOTAO_CONFIRM) == LOW && (tempoAtual - tempoUltimoCliqueBotoes > 400)) {
             universoConfirmado = false;
-            mensagemEnviada = false; // Permite printar de novo na próxima confirmação
+            mensagemEnviada = false; 
             estadoLuz = false; 
-            prioridadeAtual = 50;    // Devolve a linha para a mesa antes de sair
+            prioridadeAtual = 50;    
             Serial.println("\n[RESET] Modo Selecao Ativo. Escolha o universo...");
             tempoUltimoCliqueBotoes = tempoAtual;
             return; 
@@ -202,18 +193,16 @@ void loop() {
                 estadoLuz = !estadoLuz; 
                 
                 if (estadoLuz) {
-                    // AÇÃO: LIGAR O PÂNICO
-                    prioridadeAtual = 200; 
+                    prioridadeAtual = 100; 
                     digitalWrite(PINO_LED_VERDE, HIGH);    
-                    digitalWrite(PINO_LED_VERMELHO, LOW);  // Desliga o vermelho enquanto o pânico atua
+                    digitalWrite(PINO_LED_VERMELHO, LOW);  
                     emTransicaoOff = false; 
                     for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 129; 
                     Serial.println("[ALERTA] PANICO ATIVADO NO ESTÚDIO!");
                 } else {
-                    // AÇÃO: DESLIGAR O PÂNICO
-                    prioridadeAtual = 200; 
+                    prioridadeAtual = 100; 
                     digitalWrite(PINO_LED_VERDE, LOW);     
-                    digitalWrite(PINO_LED_VERMELHO, HIGH); // Restaura o vermelho fixo (Sistema em espera)
+                    digitalWrite(PINO_LED_VERMELHO, HIGH); 
                     emTransicaoOff = true; 
                     tempoDesligamento = tempoAtual; 
                     for (int i = 1; i <= 512; i++) pacote_sACN[125 + i] = 0; 
@@ -224,26 +213,23 @@ void loop() {
         }
         estadoAnteriorBotao = leituraAtual;
 
-        // 2. Cronômetro de Meio Segundo (500ms) para limpar a rede e liberar para a mesa
+        // 2. Cronômetro de Janela de Carência (500ms) para limpar a rede e devolver para a mesa
         if (emTransicaoOff && (tempoAtual - tempoDesligamento >= 500)) {
             prioridadeAtual = 50; 
             emTransicaoOff = false; 
-            Serial.println("[Linha devolvida com sucesso para a mesa. Panico desativado");
+            mensagemEnviada = false; // Permite que a mensagem de sinal liberado volte na próxima iteração
+            Serial.print("[INFO] Linha devolvida com sucesso para a mesa. Panico desativado no universo: ");
+            Serial.println(UNIVERSO);
         }
 
         // 3. Aplica a Prioridade Dinâmica no Pacote sACN
         pacote_sACN[108] = prioridadeAtual;
 
-        // 4. O Cronômetro de Meio Segundo (500ms) para limpar a rede e devolver pra mesa
-        if (emTransicaoOff && (tempoAtual - tempoDesligamento >= 500)) {
-            prioridadeAtual = 50; 
-            emTransicaoOff = false; 
-            
-            // MÁGICA AQUI: Libera para o print rodar novamente na tela!
-            mensagemEnviada = false; 
-            
-            Serial.println("[Linha devolvida com sucesso para a mesa. Panico desativado");
-        }
+        // 4. DESPACHA O PACOTE VIA REDE (O Bloco essencial que estava faltando!)
+        pacote_sACN[111] = seqNum++;
+        udp.beginPacket(ipDestino, 5568);
+        udp.write(pacote_sACN, 638);
+        udp.endPacket();
 
         // 5. Heartbeat DMX (40fps)
         delay(25); 
